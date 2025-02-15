@@ -17,18 +17,15 @@ This project is a **multi-layer authentication system** for high-security access
 - **Servo Motor (Door Lock Mechanism)**  
 - **Liquid Crystal Display (LCD I2C)**  
 
-## 📸 Project Demo  
-[Attach images & videos]  
-
 ## 🔗 GitHub Repository  
 👉 [GitHub Link]  
 
-## 👥 Contributors  
+## 👥 Contributors 
+- **S. Sankeeth** 
 - **M.H.A. Nasif**  
 - **S.I.M. Hamsath**  
 - **M.S.M. Inshaf**  
 - **K. Niveka**  
-- **S. Sankeeth**  
 - **D. Salomi**  
 
 ## 🔮 Future Enhancements  
