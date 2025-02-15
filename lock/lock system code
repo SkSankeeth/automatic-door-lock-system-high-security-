@@ -1,0 +1,276 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Keypad.h>
+#include <SoftwareSerial.h>
+#include <Servo.h>  
+
+// RFID Module
+#define SS_PIN 10
+#define RST_PIN 9
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+MFRC522 rfid(SS_PIN, RST_PIN);
+SoftwareSerial mySerial(3, 2); // HC-05 Bluetooth Module (Tx -> D3, Rx -> D2)
+
+const String validUID = "C3E529E2";
+const String correctPassword = "1234";
+const int otpLength = 6;
+char otp[otpLength + 1];
+String receivedData = "";
+bool otpSent = false;
+
+// Servo Motor
+Servo myServo;
+int servoPin = 6;  
+
+// Keypad setup
+const byte ROWS = 4;
+const byte COLS = 4;
+char keys[ROWS][COLS] = {
+  {'1', '2', 'A', '3'},
+  {'4', '5', 'B', '6'},
+  {'7', '8', 'C', '9'},
+  {'*', '0', 'D', '#'}
+};
+byte rowPins[ROWS] = {4, 5, A2, 7};
+byte colPins[COLS] = {8, 9, A0, A1};
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+void setup() {
+    Serial.begin(9600);
+    lcd.init();
+    lcd.backlight();
+    mySerial.begin(9600);
+    SPI.begin();
+    rfid.PCD_Init();
+    myServo.attach(servoPin);
+    myServo.write(180);
+    lcd.setCursor(0, 0);
+    lcd.print(" System Ready ");
+    Serial.println("System Ready");
+    delay(2000);
+    lcd.clear();
+}
+
+void loop() {
+    while (true) {
+        if (!scanRFID()) continue;
+        if (!authenticatePassword()) continue;
+        if (!authenticateOTP()) continue;
+        unlockDoor();
+    }
+}
+
+bool scanRFID() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Scan Your Card");
+    Serial.println("Scan Your Card");
+
+    while (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
+        delay(100);
+    }
+
+    String scannedUID = "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+        scannedUID += String(rfid.uid.uidByte[i], HEX);
+    }
+    scannedUID.toUpperCase();
+    Serial.print("Card UID: ");
+    Serial.println(scannedUID);
+    lcd.clear();
+    
+    if (scannedUID == validUID) {
+        lcd.setCursor(0, 0);
+        lcd.print(" Card Accepted ");
+        Serial.println("Card Accepted");
+        delay(2000);
+        lcd.clear();
+        return true;
+    } else {
+        lcd.setCursor(0, 0);
+        lcd.print("Card not Accepted");
+        Serial.println("Card not Accepted");
+        delay(2000);
+        return false;
+    }
+}
+
+bool authenticatePassword() {
+    String enteredPassword = "";
+    int attempts = 3;
+    while (attempts > 0) {
+        lcd.setCursor(0, 0);
+        lcd.print("Enter Password:");
+        Serial.println("Enter Password:");
+        lcd.setCursor(0, 1);
+        lcd.print("                "); 
+        enteredPassword = "";
+        while (enteredPassword.length() < 4) {
+            char key = keypad.getKey();
+            if (key) {
+                if (key == 'D') {
+                    enteredPassword = "";
+                    lcd.setCursor(0, 1);
+                    lcd.print("                ");
+                    Serial.println("Cleared");
+                } else {
+                    enteredPassword += key;
+                    lcd.setCursor(enteredPassword.length() - 1, 1);
+                    lcd.print('*'); 
+                    Serial.print(key);
+                }
+                delay(300);
+            }
+        }
+        Serial.println();
+        if (enteredPassword == correctPassword) {
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(" Password OK ");
+            Serial.println("Password OK");
+            delay(2000);
+            return true;
+        } else {
+            attempts--;
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(" Incorrect! ");
+            Serial.println("Incorrect Password!");
+            delay(2000);
+        }
+    }
+    return false;
+}
+
+
+bool authenticateOTP() {
+    int attempts = 3;
+    bool otpGenerated = false;
+
+    while (attempts > 0) {
+        lcd.setCursor(0, 0);
+        lcd.print("Connecting BT...");
+        Serial.println("Connecting Bluetooth...");
+    
+        delay(3000);
+
+        lcd.clear();
+        lcd.print(" Send Command");
+        Serial.println("Send 'OTP' via Bluetooth:");
+
+        receivedData = "";
+
+        // Wait for "OTP" command from Bluetooth
+        while (receivedData != "OTP") {
+            if (mySerial.available()) {
+                receivedData = mySerial.readStringUntil('\n');
+                receivedData.trim();
+                Serial.println("Received: " + receivedData);
+            }
+        }
+
+        // Generate and send OTP only after receiving the "OTP" command
+        generateOTP();
+        sendOTP();
+        otpGenerated = true;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print(" Enter OTP: ");
+        Serial.println("Enter OTP:");
+
+        String enteredOTP = "";
+        while (enteredOTP.length() < otpLength) {
+            char key = keypad.getKey();
+            if (key) {
+                if (key == 'D') {
+                    enteredOTP = "";
+                    lcd.setCursor(0, 1);
+                    lcd.print("                ");
+                    Serial.println("Cleared");
+                } else {
+                    enteredOTP += key;
+                    lcd.setCursor(enteredOTP.length() - 1, 1);
+                    lcd.print(key); 
+                    Serial.print(key);
+                }
+                delay(300);
+            }
+        }
+
+        Serial.println();
+        if (enteredOTP == otp) {
+            Serial.println("OTP Correct");
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(" Unlocking... ");
+            return true;
+        } else {
+            attempts--;
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Incorrect OTP");
+            Serial.println("Incorrect OTP");
+            delay(2000);
+        }
+    }
+    return false;
+}
+
+void unlockDoor() {
+    Serial.println("Rotating Servo (Unlocking)...");
+
+    for (int pos = 180; pos >= 90; pos -= 2) {  // Reduce position step-by-step
+        myServo.write(pos);
+        delay(30);  // Adjust delay for smoother motion
+    }
+
+    delay(5000);  // Keep the door unlocked for some time
+
+    Serial.println("Returning Servo to Locked Position...");
+    
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Locking..."); // Indicate locking process
+
+    for (int pos = 90; pos <= 180; pos += 2) {  // Slowly move back to the locked position
+        myServo.write(pos);
+        delay(30);
+    }
+
+    Serial.println("Servo Locked.");
+
+    // Reset RFID module to allow new scanning
+    rfid.PCD_Init();  
+    delay(1000);  
+}
+
+void generateOTP() {
+    randomSeed(analogRead(A3));
+    for (int i = 0; i < otpLength; i++) {
+        otp[i] = '0' + random(0, 10);
+    }
+    otp[otpLength] = '\0'; 
+    Serial.print("Generated OTP: ");
+    Serial.println(otp);
+}
+
+void sendOTP() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+ 
+    lcd.setCursor(0, 0);
+    lcd.print("Sending OTP...");
+    Serial.println("Sending OTP...");
+
+    mySerial.println("Your OTP is:");
+    mySerial.println(otp);
+    Serial.println("OTP Sent: " + String(otp));
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Enter the OTP:");
+    delay(2000);
+}
